@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>ОРЭ 2026 — Система Аттестации</title>
+    <style>
+        @import url('https://googleapis.com');
+        :root { --main-blue: #00a8ff; --dark-blue: #0056b3; --success: #2ecc71; --danger: #e74c3c; --bg: #eef2f7; }
+        body { background: var(--bg); font-family: 'Exo 2', sans-serif; display: flex; justify-content: center; padding: 20px; }
+        
+        .card { background: white; width: 900px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); padding: 40px; position: relative; }
+        .hidden { display: none; }
+        
+        #timer { font-size: 24px; font-weight: 800; color: var(--danger); background: #ffeaea; padding: 10px 20px; border-radius: 10px; border: 2px solid var(--danger); display: inline-block; }
+
+        .reg-box { text-align: center; }
+        input { width: 80%; padding: 12px; margin: 10px 0; border: 1px solid #d1d9e6; border-radius: 8px; outline: none; font-family: inherit; }
+        .btn { background: linear-gradient(135deg, var(--main-blue), var(--dark-blue)); color: white; border: none; padding: 12px 25px; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 5px; transition: 0.3s; }
+        .btn:hover { opacity: 0.9; transform: scale(1.02); }
+        
+        .result-card { background: white; padding: 20px; margin-bottom: 15px; border: 1px solid #e0e6ed; border-radius: 12px; position: relative; border-left: 10px solid #ddd; }
+        .admin-sig-view { border: 1px solid #eee; background: #fdfdfd; margin-top: 10px; border-radius: 5px; max-width: 150px; }
+        
+        canvas { border: 1px dashed var(--main-blue); border-radius: 5px; background: #fff; cursor: crosshair; }
+        .status-badge { float: right; padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 12px; }
+
+        /* Окно уведомления для админа */
+        .modal-admin { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:30px; border-radius:15px; box-shadow:0 0 50px rgba(0,0,0,0.5); z-index:9999; text-align:center; min-width: 300px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <!-- ВХОД -->
+    <div id="reg-screen" class="reg-box">
+        <h1 style="color: var(--dark-blue)">ОРЭ 2026 — АВТОРИЗАЦИЯ</h1>
+        <input type="text" id="reg-name" placeholder="Имя">
+        <input type="text" id="reg-surname" placeholder="Фамилия">
+        <input type="email" id="reg-email" placeholder="Почта @gmail.com">
+        <div id="admin-auth" class="hidden"><input type="password" id="admin-pass" placeholder="Пароль администратора"></div>
+        <br><button class="btn" onclick="handleAuth()">НАЧАТЬ ЭКЗАМЕН</button>
+    </div>
+
+    <!-- ТЕСТ -->
+    <div id="exam-screen" class="hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div id="timer">35:30</div>
+            <div style="text-align: right;">
+                <canvas id="sig-pad" width="150" height="60"></canvas>
+                <div style="font-size: 10px; font-weight: bold;">ПОДПИСЬ</div>
+            </div>
+        </div>
+        <h2 id="user-info-display" style="color: var(--dark-blue); margin: 0;"></h2>
+        <p id="email-display" style="color: grey; margin-bottom: 20px;"></p>
+        <div id="questions-list"></div>
+        <button class="btn" style="width: 100%; height: 50px;" onclick="submitExam()">ОТПРАВИТЬ РАБОТУ</button>
+    </div>
+
+    <!-- АДМИНКА -->
+    <div id="admin-screen" class="hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px;">
+            <h2 style="margin: 0; color: var(--dark-blue);">Рассмотрение экзаменов</h2>
+            <div>
+                <button class="btn" style="background:#555" onclick="alert('Режим просмотра активен')">Режим теста</button>
+                <button class="btn" style="background:var(--danger)" onclick="clearAll()">Очистить базу</button>
+                <button class="btn" onclick="location.reload()" style="background:#999">Выход</button>
+            </div>
+        </div>
+        <div id="results-container"></div>
+    </div>
+</div>
+
+<script>
+    const questions = ["Субъекты задержания?", "Основания обыска авто?", "Макс. время до ареста?", "Миранда: когда зачитывать?", "Миранда: если не понял?", "Проход на охраняемую терр.?", "Обыск до задержания?", "Применение оружия?", "Порядок задержания?", "Что такое тяжкое?", "Оскорбление госника?", "Дача взятки?", "Хранение нелегала?", "Соучастие?", "Превышение полномочий?", "Неподчинение?", "Самооборона?", "Аннуляция лицензии?", "Нелегальное оружие?", "Парковка на тротуаре?", "Телефон за рулем?", "Тонировка?", "Действия при ДТП?", "Маски?", "Встречка?", "Спецсигналы?", "Алкоголь?", "Штраф без водителя?", "Ваша почта еще раз (для проверки)?"];
+
+    let userData = { name: "", surname: "", email: "" };
+    let timerInterval;
+
+    // Проверка ника Admin
+    document.getElementById('reg-name').addEventListener('input', (e) => {
+        document.getElementById('admin-auth').classList.toggle('hidden', e.target.value.toLowerCase() !== 'admin');
+    });
+
+    function handleAuth() {
+        const name = document.getElementById('reg-name').value.trim();
+        const surname = document.getElementById('reg-surname').value.trim();
+        const email = document.getElementById('reg-email').value.trim();
+
+        if (name.toLowerCase() === 'admin') {
+            if (document.getElementById('admin-pass').value === "1234") { showAdminPanel(); }
+            else { alert("Доступ запрещен!"); }
+            return;
+        }
+
+        if (!name || !surname || !email.includes('@gmail.com')) {
+            alert("Заполните Имя, Фамилию и почту Gmail!"); return;
+        }
+
+        userData = { name, surname, email };
+        startExam();
+    }
+
+    function startExam() {
+        document.getElementById('reg-screen').classList.add('hidden');
+        document.getElementById('exam-screen').classList.remove('hidden');
+        document.getElementById('user-info-display').innerText = `${userData.name} ${userData.surname}`;
+        document.getElementById('email-display').innerText = userData.email;
+
+        const list = document.getElementById('questions-list');
+        questions.forEach((q, i) => {
+            list.innerHTML += `<div style="background:#f9fbff; padding:15px; border-radius:10px; margin-bottom:10px;"><b>${i+1}. ${q}</b><br><input type="text" class="ans-input" style="width:95%; border:1px solid #ddd; padding:8px; border-radius:5px; margin-top:5px;"></div>`;
+        });
+
+        startTimer(35, 30);
+    }
+
+    function startTimer(m, s) {
+        let totalSeconds = m * 60 + s;
+        timerInterval = setInterval(() => {
+            let minutes = Math.floor(totalSeconds / 60);
+            let seconds = totalSeconds % 60;
+            document.getElementById('timer').innerText = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+            if (totalSeconds <= 0) {
+                clearInterval(timerInterval);
+                submitExam();
+            }
+            totalSeconds--;
+        }, 1000);
+    }
+
+    function submitExam() {
+        clearInterval(timerInterval);
+        const answers = Array.from(document.querySelectorAll('.ans-input')).map((i, idx) => ({q: questions[idx], a: i.value}));
+        const sigData = document.getElementById('sig-pad').toDataURL();
+        
+        const db = JSON.parse(localStorage.getItem('rp_db_2026_final') || '[]');
+        db.push({
+            id: Date.now(),
+            name: userData.name,
+            surname: userData.surname,
+            email: userData.email,
+            signature: sigData,
+            answers: answers,
+            status: 'Ожидает'
+        });
+        localStorage.setItem('rp_db_2026_final', JSON.stringify(db));
+        alert("Работа отправлена на проверку!");
+        location.reload();
+    }
+
+    function showAdminPanel() {
+        document.getElementById('reg-screen').classList.add('hidden');
+        document.getElementById('admin-screen').classList.remove('hidden');
+        loadResults();
+    }
+
+    function loadResults() {
+        const db = JSON.parse(localStorage.getItem('rp_db_2026_final') || '[]');
+        const container = document.getElementById('results-container');
+        container.innerHTML = db.length ? "" : "Нет сданных работ.";
+
+        db.reverse().forEach(res => {
+            const color = res.status === 'Одобрено' ? '#2ecc71' : (res.status === 'Отклонено' ? '#e74c3c' : '#00a8ff');
+            container.innerHTML += `
+                <div class="result-card" style="border-left-color: ${color}">
+                    <span class="status-badge" style="background:${color}22; color:${color}">${res.status}</span>
+                    <h3 style="margin:0">${res.name} ${res.surname}</h3>
+                    <p style="color:grey; font-size:12px; margin:5px 0;">Email: ${res.email}</p>
+                    
+                    <div style="margin: 10px 0;">
+                        <b>Подпись участника:</b><br>
+                        <img src="${res.signature}" class="admin-sig-view">
+                    </div>
+
+                    <details>
+                        <summary style="cursor:pointer; color:var(--dark-blue)">Посмотреть 29 ответов</summary>
+                        <div style="padding:10px; background:#f4f7f9; border-radius:5px; margin-top:10px;">
+                            ${res.answers.map(a => `<p style="font-size:12px; border-bottom:1px solid #eee; padding-bottom:5px;"><b>${a.q}</b>: ${a.a || '<i>Без ответа</i>'}</p>`).join('')}
+                        </div>
+                    </details>
+
+                    <div style="margin-top:15px;">
+                        <button class="btn" style="background:var(--success); font-size:11px" onclick="finalizeVerdict(${res.id}, true)">ОДОБРИТЬ</button>
+                        <button class="btn" style="background:var(--danger); font-size:11px" onclick="finalizeVerdict(${res.id}, false)">ОТКЛОНИТЬ</button>
+                    </div>
+                </div>`;
+        });
+    }
+
+    function finalizeVerdict(id, isWin) {
+        updateStatus(id, isWin ? 'Одобрено' : 'Отклонено');
+        
+        let db = JSON.parse(localStorage.getItem('rp_db_2026_final') || '[]');
+        const user = db.find(i => i.id === id);
+        const fileName = isWin ? "победа.docx" : "Спасибо за участие но вы не прошли тест ОРЭ.docx";
+
+        const modal = document.createElement('div');
+        modal.className = "modal-admin";
+        modal.style.border = "3px solid " + (isWin ? '#2ecc71' : '#e74c3c');
+        modal.innerHTML = `
+            <h2 style="color:${isWin ? '#2ecc71' : '#e74c3c'}">${isWin ? 'ОДОБРЕНО' : 'ОТКЛОНЕНО'}</h2>
+            <p>Скопируйте почту и отправьте файл:</p>
+            <div style="background:#f0f0f0; padding:10px; margin:10px 0; font-weight:bold; cursor:pointer;" onclick="navigator.clipboard.writeText('${user.email}'); alert('Скопировано!')">
+                ${user.email} 📋
+            </div>
+            <p>📄 ФАЙЛ: <b>${fileName}</b></p>
+            <a href="mailto:${user.email}?subject=Результат экзамена ОРЭ&body=Здравствуйте, ${user.name}! Результат во вложении." class="btn" style="display:inline-block; text-decoration:none;">Открыть почту</a>
+            <button class="btn" onclick="this.parentElement.remove()" style="background:#555">Закрыть</button>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    function updateStatus(id, stat) {
+        let db = JSON.parse(localStorage.getItem('rp_db_2026_final') || '[]');
+        db = db.map(i => i.id === id ? {...i, status: stat} : i);
+        localStorage.setItem('rp_db_2026_final', JSON.stringify(db));
+        loadResults();
+    }
+
+    function clearAll() { if(confirm("Удалить все данные?")) { localStorage.removeItem('rp_db_2026_final'); loadResults(); } }
+
+    // Canvas Logic
+    const canvas = document.getElementById('sig-pad');
+    const ctx = canvas.getContext('2d');
+    let draw = false;
+    canvas.onmousedown = () => draw = true;
+    canvas.onmouseup = () => { draw = false; ctx.beginPath(); };
+    canvas.onmousemove = (e) => {
+        if(!draw) return;
+        ctx.lineWidth = 2; ctx.strokeStyle = 'black';
+        const r = canvas.getBoundingClientRect();
+        ctx.lineTo(e.clientX - r.left, e.clientY - r.top);
+        ctx.stroke(); ctx.beginPath(); ctx.moveTo(e.clientX - r.left, e.clientY - r.top);
+    };
+</script>
+</body>
+</html>
